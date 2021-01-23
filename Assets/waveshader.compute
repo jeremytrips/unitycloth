@@ -1,0 +1,145 @@
+﻿#pragma kernel applyForces 
+#pragma kernel computeSpring
+
+RWStructuredBuffer<float3> currentPositionBuffer;
+RWStructuredBuffer<float3> previousSpeedBuffer;
+RWStructuredBuffer<float3> springForceBuffer;
+
+float deltaTime;
+float3 spherePos;
+float sphereRad;
+
+float initialLength = 1.0f;
+float structuralSpringk;
+float shearSpringk;
+float bendSpringk;
+uint segments;
+float amortCoeficient;
+
+float springDamping;
+float clothWeight;
+float gravity;
+float frictionCoefficient;
+
+[numthreads(128, 1, 1)]
+void computeSpring(uint3 id : SV_DispatchThreadid) {
+
+    float3 forceSurVertex = float3 (0, -gravity * clothWeight, 0);
+    float3 forceRessortGauche = float3 (0, 0, 0);
+    float3 forceRessortBas = float3 (0, 0, 0);
+    float3 forceRessortHaut = float3 (0, 0, 0);
+    float3 forceRessortDroit = float3 (0, 0, 0);
+    float3 forceRessortHautGauche = float3 (0, 0, 0);
+    float3 forceRessortHautDroit = float3 (0, 0, 0);
+    float3 forceRessortBasGauche = float3 (0, 0, 0);
+    float3 forceRessortBasDroit = float3 (0, 0, 0);
+    float3 forceBendSpringHaut = float3 (0, 0, 0);
+    float3 forceBendSpringBas = float3 (0, 0, 0);
+    float3 forceBendSpringGauche = float3 (0, 0, 0);
+    float3 forceBendSpringDroit = float3 (0, 0, 0);
+    //float distanceZero = currentPositionBuffer[segments].x/(segments);
+    float distanceZero = 1.0f;
+    float shearDistanceZero = sqrt(2) * distanceZero;
+    float bendDistanceZero = 2 * distanceZero;
+
+    //Structural springs (carres)
+    if (id.x % (segments + 1) != 0) {
+        forceRessortGauche = -structuralSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x - 1]) - distanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x - 1]);
+    }
+    if (id.x % (segments + 1) != segments) {
+        forceRessortDroit = -structuralSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x + 1]) - distanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x + 1]);
+    }
+    if (id.x > segments) {
+        forceRessortBas = -structuralSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x - (segments + 1)]) - distanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x - (segments + 1)]);
+    }
+    if (id.x < pow(segments + 1, 2) - segments - 1) {
+        forceRessortHaut = -structuralSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x + (segments + 1)]) - distanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x + (segments + 1)]);
+    }
+
+    //Shear Springs (diagonales)
+    // Si on est pas a la ligne tout en haut, on verifie si on est pas la colonne de gauche ou de droite
+    if (id.x < pow(segments + 1, 2) - segments - 1) {
+        if (id.x % (segments + 1) != 0) {
+            forceRessortHautGauche = -shearSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x + segments]) - shearDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x + segments]);
+        }
+        if (id.x % (segments + 1) != segments) {
+            forceRessortHautDroit = -shearSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x + (segments + 2)]) - shearDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x + (segments + 2)]);
+        }
+    }
+    // Si on est pas a la ligne tout en bas, on verifie si on est pas a la colonne de gauche ou de droite
+    if (id.x > segments) {
+        if (id.x % (segments + 1) != 0) {
+            forceRessortBasGauche = -shearSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x - (segments + 2)]) - shearDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x - (segments + 2)]);
+        }
+        if (id.x % (segments + 1) != segments) {
+            forceRessortBasDroit = -shearSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x - segments]) - shearDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x - segments]);
+        }
+    }
+
+    //Bend Springs
+    //Si 2 plus haut ou 2 plus bas existent
+    if (id.x > 2 * segments + 2) {
+        forceBendSpringBas = -bendSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x - 2 * segments - 2]) - bendDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x - 2 * segments - 2]);
+    }
+    if (id.x < pow(segments + 1, 2) - 2 * segments - 2) {
+        forceBendSpringHaut = -bendSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x + 2 * segments + 2]) - bendDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x + 2 * segments + 2]);
+    }
+    // Si 2 a gauche ou 2 a droite existent
+    if (id.x % (segments + 1) != 0 && id.x % (segments + 1) != 1) {
+
+        forceBendSpringGauche = -bendSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x - 2]) - bendDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x - 2]);
+    }
+    if (id.x % (segments + 1) != segments && id.x % (segments + 1) != segments - 1) {
+        forceBendSpringDroit = -bendSpringk * (distance(currentPositionBuffer[id.x], currentPositionBuffer[id.x + 2]) - bendDistanceZero) * normalize(currentPositionBuffer[id.x] - currentPositionBuffer[id.x + 2]);
+    }
+
+
+    //On ajoute toutes les forces de ressorts dans une variable forces agissant sur le vertex, et on l'ajoute au buffer.
+    forceSurVertex += forceRessortHaut + forceRessortBas + forceRessortDroit + forceRessortGauche;
+    forceSurVertex += forceRessortHautGauche + forceRessortHautDroit + forceRessortBasGauche + forceRessortBasDroit;
+    forceSurVertex += forceBendSpringBas + forceBendSpringHaut + forceBendSpringGauche + forceBendSpringDroit;
+    springForceBuffer[id.x] = forceSurVertex;
+}
+
+
+
+[numthreads(128, 1, 1)]
+void applyForces(uint3 id : SV_DispatchThreadid) {
+    //On applique les forces d'amortissement pour éviter l'effet balancier
+    //Cet amortissement est également appliqué sur la gravité pour simuler la résistance de l'air
+    springForceBuffer[id.x] -= (previousSpeedBuffer[id.x]) * amortCoeficient;
+
+    float distanceToPoint = distance(spherePos, currentPositionBuffer[id.x]);
+
+    //applique les forces de frottement liées à la sphère 
+    if (distanceToPoint < sphereRad) {
+        float3 forces = springForceBuffer[id.x];
+        float3 unitNormal = normalize(currentPositionBuffer[id.x] - spherePos);
+        float3 frictionNormal = dot(forces, unitNormal) * unitNormal;
+        float3 frictionTangential = forces - frictionNormal;
+        float3 unitTang = normalize(frictionTangential);
+        float3 tangentialForce = -min(length(frictionTangential), frictionCoefficient * length(frictionNormal)) * unitTang;
+        springForceBuffer[id.x] += tangentialForce;
+    }
+    previousSpeedBuffer[id.x] = previousSpeedBuffer[id.x] + springForceBuffer[id.x] / clothWeight * deltaTime;
+
+    float3 currentPosition = currentPositionBuffer[id.x] + previousSpeedBuffer[id.x] * deltaTime;
+
+    //on a un sol en y = 0, donc on passe pas dessous
+    if (currentPosition.y < -3) {
+        currentPosition.y = -3;
+    }
+    distanceToPoint = distance(spherePos, currentPosition);
+    // handle contact between cloth and sphere
+    if (distanceToPoint < sphereRad) {
+        float3 distToPoint = currentPosition - spherePos;
+        float3 newCurrentPosition = spherePos + sphereRad * normalize(distToPoint);
+        previousSpeedBuffer[id.x] = (newCurrentPosition - currentPosition) / deltaTime;
+        currentPosition = newCurrentPosition;
+    }
+    // une fois la position valide, on la sauvegarde dans le buffer
+    currentPositionBuffer[id.x] = currentPosition;
+}
+
+
+
